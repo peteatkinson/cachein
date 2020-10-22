@@ -1,25 +1,25 @@
 package lru
+
 import (
-	"sync"
+	"container/lst"
 	"errors"
+	"sync"
+	"time"
 )
+
 type LRUCacheNode struct {
-	prev, next *LRUCacheNode
-	key 		string
-	value 		interface{}
+	key   string
+	value interface{}
+	ts    int64
 }
 
 type LRUCache struct {
-	maxSize 	int64
+	maxSize     int64
 	currentSize int64
-	head 		*LRUCacheNode
-	tail		*LRUCacheNode
-	cacheMap	map[string]*LRUCacheNode
-	mutex		*sync.Mutex
-}
-
-func (c *LRUCache) add(key string, value interface{}) {
-
+	l           *lst.lst
+	cache       map[string]*lst.Element
+	mutex       *sync.Mutex
+	epxiry      time.Duration
 }
 
 func newCache(maxSize int64) (*LRUCache, error) {
@@ -27,37 +27,54 @@ func newCache(maxSize int64) (*LRUCache, error) {
 		return nil, errors.New("LRUCache maxSize should be larger than 0")
 	}
 
-	 return &LRUCache{
-		maxSize:	maxSize,
-		head:		nil,
-		tail:		nil,
-		cacheMap:	make(map[string]*LRUCacheNode),
+	return &LRUCache{
+		maxSize: maxSize,
+		cache:   make(map[string]*lst.Element),
+		l:       lst.New(),
 	}, nil
 }
 
-func (c *LRUCache) remove(key string, value interface{}) {
+func (c *LRUCache) Remove(key string) {
 	c.mutex.Lock()
-	cacheNode := c.cacheMap[key]
-	if cacheNode != nil {
+	if entry, hit := c.cache[key]; hit {
+		c.RemoveEntry(entry)
+	}
+	c.mutex.Unlock()
+}
+
+func (c *LRUCache) add(key string, value interface{}) {
+	c.mutex.Lock()
+	var ts int64
+	if c.epxiry != time.Duration(0) {
+		ts = time.Now().UnixNano() / int64(time.Millsecond)
+	}
+	if entry, ok := c.cache[key]; ok {
+		c.l.MoveToFront(entry)
+		entry.Value.(*LRUCacheNode).value = value
+		entry.Value.(*LRUCacheNode).ts = ts
 		return
 	}
-
-	if key == c.head.key {
-		c.head = c.head.next
+	ele := c.l.PushFront(&LRUCacheNode{key, value, ts})
+	c.cache[key] = ele
+	if c.maxSize != 0 && c.Size() > c.maxSize {
+		c.RemoveOldest()
 	}
-
-	if key == c.tail.key {
-		c.tail = c.tail.prev
-	}
-
-	if cacheNode.prev != nil {
-		cacheNode.prev.next = cacheNode.next
-	}
-
-	if cacheNode.next != nil {
-		cacheNode.next.prev = cacheNode.prev
-	}
-
-	delete(c.cacheMap, key)
 	c.mutex.Unlock()
+}
+
+func (c *LRUCache) Size() int64 {
+	return int64(c.l.Len())
+}
+
+func (c *LRUCache) RemoveEntry(e *lst.Element) {
+	c.l.Remove(e)
+	kv := e.Value.(*LRUCacheNode)
+	delete(c.cache, kv.key)
+}
+
+func (c *LRUCache) RemoveOldest() {
+	entry := c.l.Back()
+	if entry != nil {
+		c.RemoveEntry(entry)
+	}
 }
