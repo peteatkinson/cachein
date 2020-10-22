@@ -1,7 +1,7 @@
 package lru
 
 import (
-	"container/lst"
+	lst "container/list"
 	"errors"
 	"sync"
 	"time"
@@ -16,13 +16,13 @@ type LRUCacheNode struct {
 type LRUCache struct {
 	maxSize     int64
 	currentSize int64
-	l           *lst.lst
+	l           *lst.List
 	cache       map[string]*lst.Element
 	mutex       *sync.Mutex
 	epxiry      time.Duration
 }
 
-func newCache(maxSize int64) (*LRUCache, error) {
+func NewCache(maxSize int64) (*LRUCache, error) {
 	if maxSize <= 0 {
 		return nil, errors.New("LRUCache maxSize should be larger than 0")
 	}
@@ -31,6 +31,7 @@ func newCache(maxSize int64) (*LRUCache, error) {
 		maxSize: maxSize,
 		cache:   make(map[string]*lst.Element),
 		l:       lst.New(),
+		mutex: 	 &sync.Mutex{},
 	}, nil
 }
 
@@ -42,11 +43,11 @@ func (c *LRUCache) Remove(key string) {
 	c.mutex.Unlock()
 }
 
-func (c *LRUCache) add(key string, value interface{}) {
+func (c *LRUCache) Add(key string, value interface{}) {
 	c.mutex.Lock()
 	var ts int64
 	if c.epxiry != time.Duration(0) {
-		ts = time.Now().UnixNano() / int64(time.Millsecond)
+		ts = time.Now().UnixNano() / int64(time.Millisecond)
 	}
 	if entry, ok := c.cache[key]; ok {
 		c.l.MoveToFront(entry)
@@ -60,6 +61,17 @@ func (c *LRUCache) add(key string, value interface{}) {
 		c.RemoveOldest()
 	}
 	c.mutex.Unlock()
+}
+
+func (c *LRUCache) Get(key string) (value interface{}, ok bool) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if entry, hit := c.cache[key]; hit {
+		c.l.MoveToFront(entry)
+		return entry.Value.(*LRUCacheNode).value, true
+	}
+	return
 }
 
 func (c *LRUCache) Size() int64 {
